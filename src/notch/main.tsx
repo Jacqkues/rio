@@ -8,6 +8,9 @@ import "../panel/styles.css";
 import "./styles.css";
 import { sfx } from "../sound";
 import { Feedback } from "../feedback";
+import { initAnalytics, track } from "../analytics";
+
+initAnalytics("notch");
 
 const shapes = {
   closed: { width: 136, height: 32, borderRadius: 100 },
@@ -26,9 +29,13 @@ function Notch() {
   const previous = useRef({ phase: "closed", index: 0, outcome: view?.outcome });
   useEffect(() => {
     const prev = previous.current;
-    if (phase === "expanded" && prev.phase !== phase) sfx.open();
+    if (phase === "expanded" && prev.phase !== phase) {
+      sfx.open();
+      track("autopilot_offered", { mode: view?.mode, steps: view?.total });
+    }
     if (view && !view.outcome && view.index > prev.index) sfx.step();
     if (view?.outcome && view.outcome !== prev.outcome) {
+      track("autopilot_ended", { outcome: view.outcome, mode: view.mode, steps_done: view.done, steps_total: view.total });
       if (view.outcome === "completed") sfx.success();
       else if (view.outcome === "failed") sfx.error();
     }

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { track } from "../analytics";
 import Palette from "./Palette";
 import { AnimatePresence, motion } from "motion/react";
 import { Transcript, Wave, tail } from "./Dictaphone";
@@ -76,6 +77,7 @@ export default function App() {
     const next = SPEECH_LANGS[(SPEECH_LANGS.indexOf(speechLang) + 1) % SPEECH_LANGS.length];
     setSpeechLang(next);
     saveSpeechLang(next);
+    track("speech_language_changed", { lang: next });
     if (next !== "auto") langRef.current = next;
     if (listening) api.listenStop();
   }
@@ -329,6 +331,7 @@ export default function App() {
   }
 
   function toggleVoice() {
+    track("voice_output_toggled", { on: !voice });
     if (voice) stopSpeaking();
     setVoice(!voice);
   }

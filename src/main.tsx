@@ -6,7 +6,7 @@ import "@fontsource-variable/geist";
 import "./panel/styles.css";
 import { initAnalytics } from "./analytics";
 
-initAnalytics();
+initAnalytics("app");
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>

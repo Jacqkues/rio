@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { track } from "../analytics";
+import { runCount, runEnded, runStarted, runStep, timed, track } from "../analytics";
 
 export type MilestoneView = {
   id: string;
@@ -96,60 +96,116 @@ export type Status = {
   tts: string;
 };
 
-/** Counts a finished tutorial once per "done" step (no goal text is sent). */
-function doneCheck(step: Step): Step {
-  if (step.kind === "done") track("tutorial_completed", { milestones: step.completed?.length ?? 0 });
+/** App of each library tutorial, and of the last question Holo chose to guide. */
+const tutorialApps = new Map<string, string>();
+let guidedApp: string | null = null;
+
+function stepped(step: Step): Step {
+  runStep(step);
   return step;
 }
-
+const stepProps = (s: Step) => ({ kind: s.kind, unchanged: s.unchanged, hint_only: s.hint_only, milestones_total: s.progress.length });
 export const api = {
   skillsList: () => invoke<Skill[]>("skills_list"),
-  skillDecline: (skillId: string) => invoke("skill_decline", { skillId }),
-  skillProposeNow: (skillId: string) => invoke("skill_propose_now", { skillId }),
-  autopilotAccept: (skillId: string) => invoke("autopilot_accept", { skillId }),
-  autopilotStop: () => invoke("autopilot_stop"),
-  autopilotFast: () => invoke("autopilot_fast"),
-  autopilotDecline: () => invoke("autopilot_decline"),
+  skillDecline: (skillId: string) => {
+    track("skill_declined");
+    return invoke("skill_decline", { skillId });
+  },
+  skillProposeNow: (skillId: string) => {
+    track("skill_proposed_now");
+    return invoke("skill_propose_now", { skillId });
+  },
+  autopilotAccept: (skillId: string) => timed("autopilot_accepted", {}, () => invoke("autopilot_accept", { skillId })),
+  autopilotStop: () => timed("autopilot_stopped", {}, () => invoke("autopilot_stop")),
+  autopilotFast: () => timed("autopilot_fast", {}, () => invoke("autopilot_fast")),
+  autopilotDecline: () => timed("autopilot_declined", {}, () => invoke("autopilot_decline")),
   autopilotView: () => invoke<AutopilotView>("autopilot_view"),
   notchSurface: (surface: { x: number; y: number; width: number; height: number; radius: number }) => invoke("notch_surface", { surface }),
   status: () => invoke<Status>("status"),
   /** Starts a saved tutorial (`tutorialId`) or plans one from a free-form goal. */
   tutorStart: (goal: string | null, tutorialId: string | null, lang: string | null) => {
-    track("tutorial_started", { source: tutorialId ? "library" : "goal", lang });
-    return invoke<Step>("tutor_start", { goal, tutorialId, lang }).then(doneCheck);
+    const source = tutorialId ? "library" : "goal";
+    const app = tutorialId ? tutorialApps.get(tutorialId) ?? null : guidedApp;
+    guidedApp = null;
+    runStarted(source, lang, app);
+    track("tutorial_started", { source, lang, app });
+    // `tutorial_planned`: time to the first step (planning + first look).
+    return timed("tutorial_planned", { source, lang, app }, () => invoke<Step>("tutor_start", { goal, tutorialId, lang }), stepProps)
+      .then(stepped)
+      .catch((e) => {
+        runEnded("error", e);
+        throw e;
+      });
   },
-  tutorSkipMilestone: (lang: string | null) => invoke<Step>("tutor_skip_milestone", { lang }),
+  tutorSkipMilestone: (lang: string | null) => {
+    runCount("skips");
+    return timed("milestone_skipped", {}, () => invoke<Step>("tutor_skip_milestone", { lang }), stepProps).then(stepped);
+  },
   /** Learner language of something said (Gladia's detection) or typed (text detection). */
   resolveLang: (text: string, spoken: string | null, fallback: string | null) =>
     invoke<string>("resolve_lang", { text, spoken, fallback }),
-  listTutorials: () => invoke<TutorialSummary[]>("list_tutorials"),
-  answerQuestion: (question: string, lang: string | null) => {
-    track("question_asked", { where: "home", lang });
-    return invoke<QaAnswer>("answer_question", { question, lang });
-  },
+  listTutorials: () =>
+    invoke<TutorialSummary[]>("list_tutorials").then((list) => {
+      for (const t of list) tutorialApps.set(t.id, t.app);
+      track("library_loaded", { tutorials: list.length, apps: [...new Set(list.map((t) => t.app))] });
+      return list;
+    }),
+  answerQuestion: (question: string, lang: string | null) =>
+    timed("question_answered", { where: "home", lang, words: question.trim().split(/\s+/).length }, () => invoke<QaAnswer>("answer_question", { question, lang }), (r) => {
+      if (r.kind === "guide") guidedApp = r.app_name || null;
+      return {
+        decision: r.kind,
+        app: r.app_name || null,
+        searches: r.searches.length,
+        search_backends: [...new Set(r.searches.map((x) => x.backend))],
+        sources: r.sources.length,
+        details: r.details.length,
+        can_point: !!r.target,
+      };
+    }),
   /** YouTube video → tutorial in the library (progress on "import:progress"). */
-  importYoutube: (url: string) => {
-    track("youtube_imported");
-    return invoke<Imported>("import_youtube", { url });
-  },
+  importYoutube: (url: string) =>
+    timed("youtube_imported", {}, () => invoke<Imported>("import_youtube", { url }), (r) => ({ app: r.app, milestones: r.milestones, language: r.language })),
   /** Real icons of installed apps, keyed by app name. */
   /** Saves the run as a tutorial in the library; returns its title. */
-  saveTutorial: () => invoke<string>("save_tutorial"),
+  saveTutorial: () => timed("tutorial_saved", {}, () => invoke<string>("save_tutorial")),
+  /** `trigger`: "manual" when the learner pressed "I did it", else the screen watcher. */
   tutorNext: (event: string, lang: string | null, onlyIfChanged = false) =>
-    invoke<Step>("tutor_next", { event, onlyIfChanged, lang }).then(doneCheck),
-  tutorRepoint: () => invoke("tutor_repoint"),
+    timed("step_decided", { trigger: event.startsWith("The learner") ? "manual" : "watch" }, () => invoke<Step>("tutor_next", { event, onlyIfChanged, lang }), stepProps)
+      .then(stepped)
+      .catch((e) => {
+        track("step_failed", {});
+        throw e;
+      }),
+  tutorRepoint: () => {
+    runCount("repoints");
+    track("pointer_repointed");
+    return invoke("tutor_repoint");
+  },
   /** Shows the element of a step the learner was meant to find alone. */
-  tutorReveal: () => invoke("tutor_reveal"),
+  tutorReveal: () => {
+    runCount("reveals");
+    track("hint_revealed");
+    return invoke("tutor_reveal");
+  },
   /** Ends a question pause: shows the step again and watches the screen. */
   tutorResume: () => invoke("tutor_resume"),
   tutorStop: () => {
-    track("tutorial_stopped");
+    runEnded("stopped");
     return invoke("tutor_stop");
   },
-  locate: (target: string, label: string) => invoke("locate", { target, label }),
+  locate: (target: string, label: string) => {
+    track("show_me_clicked");
+    return invoke("locate", { target, label });
+  },
   ask: (question: string, step: Step | null, lang: string | null) => {
-    track("question_asked", { where: "tutorial", lang });
-    return invoke<Answer>("ask", { question, instruction: step?.instruction, target: step?.element, lang });
+    runCount("questions");
+    return timed(
+      "question_answered",
+      { where: "tutorial", lang, step_kind: step?.kind ?? null, words: question.trim().split(/\s+/).length },
+      () => invoke<Answer>("ask", { question, instruction: step?.instruction, target: step?.element, lang }),
+      (r) => ({ action: r.action, details: r.details.length, pointed: r.pointed }),
+    );
   },
   hidePointer: () => invoke("hide_pointer"),
   /** Text next to the menu bar icon; null clears it. */
@@ -158,7 +214,7 @@ export const api = {
   resizeBar: (height: number, width: number) => invoke("resize_bar", { height, width }),
   setSticky: (sticky: boolean) => invoke("set_bar_sticky", { sticky }),
   /** `lang`: the language the learner chose to speak, or null to detect it. */
-  listenStart: (lang: string | null) => invoke("listen_start", { lang }),
+  listenStart: (lang: string | null) => timed("voice_started", { lang_mode: lang ?? "auto" }, () => invoke("listen_start", { lang })),
   listenStop: () => invoke("listen_stop"),
 };
 
