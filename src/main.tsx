@@ -4,6 +4,9 @@ import { MotionConfig } from "motion/react";
 import App from "./panel/App";
 import "@fontsource-variable/geist";
 import "./panel/styles.css";
+import { initAnalytics } from "./analytics";
+
+initAnalytics();
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>

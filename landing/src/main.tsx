@@ -10,6 +10,9 @@ import "@fontsource/ibm-plex-mono/500.css";
 import "@fontsource/jaini/400.css";
 import "./styles.css";
 import App from "./App";
+import { initAnalytics } from "./analytics";
+
+initAnalytics();
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

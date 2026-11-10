@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { track } from "../analytics";
 
 export type MilestoneView = {
   id: string;
@@ -95,6 +96,12 @@ export type Status = {
   tts: string;
 };
 
+/** Counts a finished tutorial once per "done" step (no goal text is sent). */
+function doneCheck(step: Step): Step {
+  if (step.kind === "done") track("tutorial_completed", { milestones: step.completed?.length ?? 0 });
+  return step;
+}
+
 export const api = {
   skillsList: () => invoke<Skill[]>("skills_list"),
   skillDecline: (skillId: string) => invoke("skill_decline", { skillId }),
@@ -107,30 +114,43 @@ export const api = {
   notchSurface: (surface: { x: number; y: number; width: number; height: number; radius: number }) => invoke("notch_surface", { surface }),
   status: () => invoke<Status>("status"),
   /** Starts a saved tutorial (`tutorialId`) or plans one from a free-form goal. */
-  tutorStart: (goal: string | null, tutorialId: string | null, lang: string | null) =>
-    invoke<Step>("tutor_start", { goal, tutorialId, lang }),
+  tutorStart: (goal: string | null, tutorialId: string | null, lang: string | null) => {
+    track("tutorial_started", { source: tutorialId ? "library" : "goal", lang });
+    return invoke<Step>("tutor_start", { goal, tutorialId, lang }).then(doneCheck);
+  },
   tutorSkipMilestone: (lang: string | null) => invoke<Step>("tutor_skip_milestone", { lang }),
   /** Learner language of something said (Gladia's detection) or typed (text detection). */
   resolveLang: (text: string, spoken: string | null, fallback: string | null) =>
     invoke<string>("resolve_lang", { text, spoken, fallback }),
   listTutorials: () => invoke<TutorialSummary[]>("list_tutorials"),
-  answerQuestion: (question: string, lang: string | null) => invoke<QaAnswer>("answer_question", { question, lang }),
+  answerQuestion: (question: string, lang: string | null) => {
+    track("question_asked", { where: "home", lang });
+    return invoke<QaAnswer>("answer_question", { question, lang });
+  },
   /** YouTube video → tutorial in the library (progress on "import:progress"). */
-  importYoutube: (url: string) => invoke<Imported>("import_youtube", { url }),
+  importYoutube: (url: string) => {
+    track("youtube_imported");
+    return invoke<Imported>("import_youtube", { url });
+  },
   /** Real icons of installed apps, keyed by app name. */
   /** Saves the run as a tutorial in the library; returns its title. */
   saveTutorial: () => invoke<string>("save_tutorial"),
   tutorNext: (event: string, lang: string | null, onlyIfChanged = false) =>
-    invoke<Step>("tutor_next", { event, onlyIfChanged, lang }),
+    invoke<Step>("tutor_next", { event, onlyIfChanged, lang }).then(doneCheck),
   tutorRepoint: () => invoke("tutor_repoint"),
   /** Shows the element of a step the learner was meant to find alone. */
   tutorReveal: () => invoke("tutor_reveal"),
   /** Ends a question pause: shows the step again and watches the screen. */
   tutorResume: () => invoke("tutor_resume"),
-  tutorStop: () => invoke("tutor_stop"),
+  tutorStop: () => {
+    track("tutorial_stopped");
+    return invoke("tutor_stop");
+  },
   locate: (target: string, label: string) => invoke("locate", { target, label }),
-  ask: (question: string, step: Step | null, lang: string | null) =>
-    invoke<Answer>("ask", { question, instruction: step?.instruction, target: step?.element, lang }),
+  ask: (question: string, step: Step | null, lang: string | null) => {
+    track("question_asked", { where: "tutorial", lang });
+    return invoke<Answer>("ask", { question, instruction: step?.instruction, target: step?.element, lang });
+  },
   hidePointer: () => invoke("hide_pointer"),
   /** Text next to the menu bar icon; null clears it. */
   setTray: (text: string | null) => invoke("set_tray_status", { text }),

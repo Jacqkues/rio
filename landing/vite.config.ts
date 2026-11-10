@@ -34,6 +34,8 @@ export default defineConfig(({ mode }) => {
   const env = { ...loadEnv(mode, process.cwd(), ""), ...process.env } as StripeEnv;
   return {
     plugins: [react(), stripeApi(env)],
+    // VITE_* from the repo .env (h-tutor/.env), e.g. VITE_POSTHOG_KEY.
+    envDir: "..",
     server: { port: 5173, host: true, allowedHosts: true },
     preview: { port: 4173, host: true, allowedHosts: true },
   };
