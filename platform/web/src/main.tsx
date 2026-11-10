@@ -14,6 +14,9 @@ import { TutorialPage } from "./pages/Tutorial";
 import { UsagePage } from "./pages/Usage";
 import { I } from "./ui";
 import "./styles.css";
+import { identify, initAnalytics, resetIdentity, track } from "./analytics";
+
+initAnalytics();
 
 const MAIN = [
   { path: "/home", label: "Home", icon: I.Home },
@@ -71,6 +74,12 @@ function Shell({ path, orgId }: { path: string; orgId: string }) {
     if (!known) navigate("/home", true);
   }, [known]);
   const me = useApi<{ role: string; canManage: boolean }>(`/me?org=${orgId}`);
+  const session = auth.useSession();
+  const active = auth.useActiveOrganization();
+  useEffect(() => {
+    const user = session.data?.user;
+    if (user) identify(user, active.data ? { id: active.data.id, name: active.data.name } : null, me.data?.role);
+  }, [session.data?.user?.id, active.data?.id, me.data?.role]);
   const canManage = !!me.data?.canManage;
   const tid = path.match(/^\/t\/([\w-]+)/)?.[1];
   // Phones and small tablets: icons in a top bar; the logo opens the full menu as a drawer.
@@ -191,6 +200,8 @@ function Rail({ path, orgId, open: pinned, onToggle, hover = false }: { path: st
             title="Sign out"
             aria-label="Sign out"
             onClick={async () => {
+              track("signed_out");
+              resetIdentity();
               await auth.signOut();
               navigate("/sign-in", true);
             }}

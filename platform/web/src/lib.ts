@@ -1,6 +1,7 @@
 import { organizationClient } from "better-auth/client/plugins";
 import { createAuthClient } from "better-auth/react";
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
+import { apiWrite } from "./analytics";
 
 export const auth = createAuthClient({ baseURL: window.location.origin, plugins: [organizationClient()] });
 
@@ -28,6 +29,8 @@ export function usePath(): string {
 // ---------------------------------------------------------------- console API
 
 export async function api<T>(path: string, init?: RequestInit & { json?: unknown }): Promise<T> {
+  const method = (init?.method ?? "GET").toUpperCase();
+  const t0 = performance.now();
   const r = await fetch(`/api/app${path}`, {
     ...init,
     credentials: "include",
@@ -35,7 +38,9 @@ export async function api<T>(path: string, init?: RequestInit & { json?: unknown
     body: init?.json !== undefined ? JSON.stringify(init.json) : init?.body,
   });
   const v = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error((v as { error?: string }).error ?? `Request failed (${r.status})`);
+  const error = r.ok ? undefined : (v as { error?: string }).error ?? `Request failed (${r.status})`;
+  if (method !== "GET") apiWrite(method, path, init?.json, r.status, performance.now() - t0, error);
+  if (error) throw new Error(error);
   return v as T;
 }
 

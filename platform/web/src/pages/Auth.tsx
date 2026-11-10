@@ -1,4 +1,5 @@
 import { type FormEvent, useEffect, useState } from "react";
+import { track } from "../analytics";
 import { auth, navigate } from "../lib";
 import { I } from "../ui";
 
@@ -65,6 +66,7 @@ export function AuthPage({ mode, invite }: { mode: "sign-in" | "sign-up"; invite
     setError(null);
     // Back to the invitation after Google, otherwise to the console.
     const here = window.location.pathname;
+    track(m === "sign-up" ? "sign_up_started" : "sign_in_started", { method: "google", invite: !!invite });
     const r = await auth.signIn.social({ provider: "google", callbackURL: invite ? here : "/home", errorCallbackURL: here });
     // On success the browser leaves for Google; we only get here on an error.
     if (r?.error) {
@@ -82,6 +84,7 @@ export function AuthPage({ mode, invite }: { mode: "sign-in" | "sign-up"; invite
         ? await auth.signUp.email({ name: name.trim() || email.split("@")[0]!, email: email.trim(), password })
         : await auth.signIn.email({ email: email.trim(), password });
     setBusy(false);
+    track(m === "sign-up" ? "signed_up" : "signed_in", { method: "email", invite: !!invite, ok: !r.error, ...(r.error ? { error: (r.error.message ?? "").slice(0, 160) } : {}) });
     if (r.error) setError(r.error.message ?? "Something went wrong");
     else if (!invite) navigate("/home", true);
   }
@@ -175,6 +178,7 @@ export function OnboardingPage({ again }: { again?: boolean }) {
     setError(null);
     const base = slugify(name) || "team";
     const r = await auth.organization.create({ name: name.trim(), slug: `${base}-${Math.random().toString(36).slice(2, 6)}` });
+    track("organization_created", { ok: !r.error && !!r.data });
     if (r.error || !r.data) {
       setBusy(false);
       return setError(r.error?.message ?? "Could not create the organization");
@@ -228,6 +232,7 @@ export function InvitePage({ id }: { id: string }) {
   async function accept() {
     setBusy(true);
     const r = await auth.organization.acceptInvitation({ invitationId: id });
+    track("invitation_accepted", { ok: !r.error });
     if (r.error) {
       setBusy(false);
       return setError(r.error.message ?? "Could not join");

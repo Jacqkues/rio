@@ -1,4 +1,5 @@
 import { type FormEvent, useCallback, useEffect, useState } from "react";
+import { track } from "../analytics";
 import { auth, initials } from "../lib";
 import { CopyButton, Head, Loading, Modal } from "../ui";
 
@@ -181,6 +182,7 @@ function InviteModal({ onClose, onInvited }: { onClose: () => void; onInvited: (
     setBusy(true);
     const r = await auth.organization.inviteMember({ email: email.trim(), role: role as "member" });
     setBusy(false);
+    track("member_invited", { role, ok: !r.error && !!r.data });
     if (r.error || !r.data) return setError(r.error?.message ?? "Could not invite");
     onInvited(email.trim(), (r.data as { id: string }).id);
   }
